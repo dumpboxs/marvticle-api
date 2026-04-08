@@ -1,15 +1,28 @@
 {
   "name": "elysiajs-paib-koding",
   "version": "1.0.50",
+  "imports": {
+    "#/*": "./src/*"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun run --watch src/index.ts",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio",
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "elysia": "latest"
+    "@neondatabase/serverless": "^1.0.2",
+    "@t3-oss/env-core": "^0.13.11",
+    "dotenv": "^17.4.1",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "latest",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "drizzle-kit": "^0.31.10"
   },
   "module": "src/index.js"
 }
