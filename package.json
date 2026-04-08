@@ -1,6 +1,7 @@
 {
   "name": "elysiajs-paib-koding",
   "version": "1.0.50",
+  "type": "module",
   "imports": {
     "#/*": "./src/*"
   },
@@ -13,16 +14,24 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@elysiajs/cors": "^1.4.1",
+    "@elysiajs/openapi": "^1.4.14",
     "@neondatabase/serverless": "^1.0.2",
     "@t3-oss/env-core": "^0.13.11",
+    "better-auth": "^1.6.0",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
     "elysia": "latest",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/compat": "^2.0.5",
     "bun-types": "latest",
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^10.2.0",
+    "eslint-plugin-drizzle": "^0.2.3",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.58.1"
   },
   "module": "src/index.js"
 }

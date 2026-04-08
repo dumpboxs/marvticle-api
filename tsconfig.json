@@ -108,5 +108,6 @@
     "skipLibCheck": true /* Skip type checking all .d.ts files. */,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
-  }
+  },
+  "include": ["**/*.ts", "**/*.tsx", "eslint.config.js"]
 }
