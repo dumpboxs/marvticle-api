@@ -11,21 +11,26 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "db:start": "docker compose up -d",
+    "db:watch": "docker compose up",
+    "db:stop": "docker compose stop",
+    "db:down": "docker compose down"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.1",
     "@elysiajs/openapi": "^1.4.14",
-    "@neondatabase/serverless": "^1.0.2",
     "@t3-oss/env-core": "^0.13.11",
     "better-auth": "^1.6.0",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
     "elysia": "latest",
+    "pg": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.5",
+    "@types/pg": "^8.20.0",
     "bun-types": "latest",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.2.0",
