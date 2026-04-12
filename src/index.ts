@@ -1,10 +1,10 @@
 import { Elysia } from 'elysia'
 import { openapi } from '@elysiajs/openapi'
 import { cors } from '@elysiajs/cors'
-import { z } from 'zod'
 
 import { env } from '#/env'
 import { auth, OpenAPI } from '#/lib/auth'
+import { createOpenApiConfig } from '#/lib/openapi'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
 import { postRoutes } from '#/routes/post.route'
 
@@ -18,17 +18,14 @@ const app = new Elysia()
     })
   )
   .use(
-    openapi({
-      documentation: {
+    openapi(
+      createOpenApiConfig({
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         components: await OpenAPI.components,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         paths: await OpenAPI.getPaths(),
-      },
-      mapJsonSchema: {
-        zod: z.toJSONSchema,
-      },
-    })
+      })
+    )
   )
   .use(apiErrorPlugin)
   .mount('/auth', auth.handler)

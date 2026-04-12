@@ -3,6 +3,11 @@ import { openapi } from '@elysiajs/openapi'
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 
+import {
+  createOpenApiConfig,
+  OPENAPI_DOCS_PATH,
+  OPENAPI_INFO,
+} from '#/lib/openapi'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
 import {
   createPostRoutes,
@@ -48,13 +53,7 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
   }
 
   return new Elysia()
-    .use(
-      openapi({
-        mapJsonSchema: {
-          zod: z.toJSONSchema,
-        },
-      })
-    )
+    .use(openapi(createOpenApiConfig()))
     .use(apiErrorPlugin)
     .use(createPostRoutes({ ...defaultDeps, ...deps }))
     .get(
@@ -81,6 +80,9 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
       }
     )
 }
+
+const getOpenApiSpecRequest = () =>
+  new Request(`http://localhost${OPENAPI_DOCS_PATH}/json`)
 
 const postRequest = (payload: unknown) =>
   new Request('http://localhost/api/posts', {
@@ -309,11 +311,27 @@ describe('post.route response contract', () => {
     expect(rateLimitBody['message']).toBe('Rate limited')
   })
 
+  it('serves OpenAPI UI and exposes the custom API info document', async () => {
+    const app = buildApp()
+
+    const docsResponse = await app.handle(
+      new Request(`http://localhost${OPENAPI_DOCS_PATH}`)
+    )
+    const specResponse = await app.handle(getOpenApiSpecRequest())
+    const spec = (await specResponse.json()) as {
+      info?: Record<string, unknown>
+    }
+
+    expect(docsResponse.status).toBe(200)
+    expect(docsResponse.headers.get('content-type')).toContain('text/html')
+
+    expect(specResponse.status).toBe(200)
+    expect(spec.info).toMatchObject(OPENAPI_INFO)
+  })
+
   it('exposes 200/400/401/403/404/422/429/500 in OpenAPI post responses', async () => {
     const app = buildApp()
-    const response = await app.handle(
-      new Request('http://localhost/openapi/json')
-    )
+    const response = await app.handle(getOpenApiSpecRequest())
     const spec = (await response.json()) as {
       paths?: Record<string, { post?: { responses?: Record<string, unknown> } }>
     }
@@ -338,5 +356,61 @@ describe('post.route response contract', () => {
         '500',
       ])
     )
+  })
+
+  it('exposes OpenAPI detail metadata for post endpoints', async () => {
+    const app = buildApp()
+    const response = await app.handle(getOpenApiSpecRequest())
+    const spec = (await response.json()) as {
+      paths?: Record<
+        string,
+        {
+          get?: {
+            summary?: string
+            description?: string
+            tags?: string[]
+            operationId?: string
+          }
+          post?: {
+            summary?: string
+            description?: string
+            tags?: string[]
+            operationId?: string
+          }
+        }
+      >
+    }
+
+    const listPathKey = Object.keys(spec.paths ?? {}).find(
+      (path) => path === '/api/posts' || path === '/api/posts/'
+    )
+    const postByIdPathKey = Object.keys(spec.paths ?? {}).find(
+      (path) => path.includes('/api/posts') && path.includes('id')
+    )
+
+    expect(listPathKey).toBeDefined()
+    expect(postByIdPathKey).toBeDefined()
+
+    expect(spec.paths?.[listPathKey!]?.get).toMatchObject({
+      summary: 'List all posts',
+      description:
+        'Retrieve a paginated list of published posts with cursor-based pagination.',
+      tags: ['Posts'],
+      operationId: 'listPosts',
+    })
+
+    expect(spec.paths?.[listPathKey!]?.post).toMatchObject({
+      summary: 'Create a new post',
+      description: 'Create a new blog post. Requires authentication.',
+      tags: ['Posts'],
+      operationId: 'createPost',
+    })
+
+    expect(spec.paths?.[postByIdPathKey!]?.get).toMatchObject({
+      summary: 'Get post by ID',
+      description: 'Retrieve a single published post by its ID.',
+      tags: ['Posts'],
+      operationId: 'getPostById',
+    })
   })
 })

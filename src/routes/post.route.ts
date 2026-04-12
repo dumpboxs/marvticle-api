@@ -213,6 +213,13 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
         response: withStandardResponses({
           200: getPostsResponseSchema,
         }),
+        detail: {
+          summary: 'List all posts',
+          description:
+            'Retrieve a paginated list of published posts with cursor-based pagination.',
+          tags: ['Posts'],
+          operationId: 'listPosts',
+        },
       }
     )
     .get(
@@ -240,6 +247,12 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
         response: withStandardResponses({
           200: getPostByIdResponseSchema,
         }),
+        detail: {
+          summary: 'Get post by ID',
+          description: 'Retrieve a single published post by its ID.',
+          tags: ['Posts'],
+          operationId: 'getPostById',
+        },
       }
     )
     .post(
@@ -286,6 +299,12 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
         response: withStandardResponses({
           200: createPostResponseSchema,
         }),
+        detail: {
+          summary: 'Create a new post',
+          description: 'Create a new blog post. Requires authentication.',
+          tags: ['Posts'],
+          operationId: 'createPost',
+        },
       }
     )
 }
