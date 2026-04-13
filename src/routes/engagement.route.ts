@@ -2,6 +2,7 @@ import Elysia, { status as elysiaStatus } from 'elysia'
 import { z } from 'zod'
 
 import { auth } from '#/lib/auth'
+import { hashViewerIp } from '#/lib/viewer-ip'
 import {
   ApiSuccessSchema,
   createErrorResponse,
@@ -71,7 +72,7 @@ type EngagementRoutesDeps = {
     userId: string
   ) => Promise<DeleteCommentResult>
   getCommentsCount: (postId: string) => Promise<number>
-  trackView: (postId: string, userId?: string, viewerIp?: string) => Promise<void>
+  trackView: (postId: string, userId?: string, viewerIpHash?: string) => Promise<void>
   getViewsCount: (postId: string) => Promise<number>
   getSession: (request: Request) => Promise<AuthenticatedSession>
   getClientIp: (request: Request) => string | undefined
@@ -135,8 +136,8 @@ const defaultDeps: EngagementRoutesDeps = {
   deleteComment: (commentId, userId) =>
     engagementService.deleteComment(commentId, userId),
   getCommentsCount: (postId) => engagementService.getCommentsCount(postId),
-  trackView: (postId, userId, viewerIp) =>
-    engagementService.trackView(postId, userId, viewerIp),
+  trackView: (postId, userId, viewerIpHash) =>
+    engagementService.trackView(postId, userId, viewerIpHash),
   getViewsCount: (postId) => engagementService.getViewsCount(postId),
   getSession: async (request) => {
     const session = await auth.api.getSession({
@@ -561,8 +562,9 @@ export const createEngagementRoutes = (
       async ({ body, request, user }) => {
         try {
           const clientIp = runtimeDeps.getClientIp(request)
+          const viewerIpHash = clientIp ? hashViewerIp(clientIp) : undefined
 
-          await runtimeDeps.trackView(body.postId, user?.id, clientIp)
+          await runtimeDeps.trackView(body.postId, user?.id, viewerIpHash)
 
           return {
             success: true,

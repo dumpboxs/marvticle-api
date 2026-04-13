@@ -7,6 +7,7 @@ import {
   createOpenApiConfig,
   OPENAPI_DOCS_PATH,
 } from '#/lib/openapi'
+import { hashViewerIp } from '#/lib/viewer-ip'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
 import {
   createEngagementRoutes,
@@ -104,7 +105,7 @@ const buildApp = (deps: CreateEngagementRoutesDeps = {}) => {
   const trackedViews: Array<{
     postId: string
     userId?: string
-    viewerIp?: string
+    viewerIpHash?: string
   }> = []
 
   const defaultDeps: CreateEngagementRoutesDeps = {
@@ -128,11 +129,11 @@ const buildApp = (deps: CreateEngagementRoutesDeps = {}) => {
     updateComment: async () => updatedComment,
     deleteComment: async () => ({ deleted: true }),
     getCommentsCount: async () => 3,
-    trackView: async (viewPostId, trackedUserId, viewerIp) => {
+    trackView: async (viewPostId, trackedUserId, viewerIpHash) => {
       trackedViews.push({
         postId: viewPostId,
         userId: trackedUserId,
-        viewerIp,
+        viewerIpHash,
       })
     },
     getViewsCount: async () => trackedViews.length,
@@ -414,15 +415,15 @@ describe('engagement.route response contract', () => {
     const trackedViews: Array<{
       postId: string
       userId?: string
-      viewerIp?: string
+      viewerIpHash?: string
     }> = []
 
     const app = buildApp({
-      trackView: async (trackedPostId, trackedUserId, viewerIp) => {
+      trackView: async (trackedPostId, trackedUserId, viewerIpHash) => {
         trackedViews.push({
           postId: trackedPostId,
           userId: trackedUserId,
-          viewerIp,
+          viewerIpHash,
         })
       },
       getViewsCount: async () => trackedViews.length,
@@ -458,12 +459,12 @@ describe('engagement.route response contract', () => {
       {
         postId,
         userId,
-        viewerIp: '203.0.113.10',
+        viewerIpHash: hashViewerIp('203.0.113.10'),
       },
       {
         postId,
         userId: undefined,
-        viewerIp: '203.0.113.11',
+        viewerIpHash: hashViewerIp('203.0.113.11'),
       },
     ])
   })

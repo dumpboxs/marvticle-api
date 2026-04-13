@@ -8,6 +8,20 @@
       "when": 1776007602553,
       "tag": "0000_condemned_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776010469448,
+      "tag": "0001_tan_umar",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776011132045,
+      "tag": "0002_careful_maelstrom",
+      "breakpoints": true
     }
   ]
 }

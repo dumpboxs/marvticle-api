@@ -71,6 +71,21 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
       },
     })
     .get(
+      '/__test/business-object',
+      () => ({
+        code: 404,
+        response: { message: 'Business object, not HTTP wrapper' },
+      }),
+      {
+        response: z.object({
+          code: z.number(),
+          response: z.object({
+            message: z.string(),
+          }),
+        }),
+      }
+    )
+    .get(
       '/__test/custom-404',
       ({ status }) => status(404, 'Missing resource'),
       {
@@ -309,6 +324,22 @@ describe('post.route response contract', () => {
     expect(rateLimitResponse.status).toBe(429)
     expect(rateLimitBody['code']).toBe('TOO_MANY_REQUESTS')
     expect(rateLimitBody['message']).toBe('Rate limited')
+  })
+
+  it('does not treat ordinary business objects as status wrappers', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      new Request('http://localhost/__test/business-object')
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({
+      code: 404,
+      response: {
+        message: 'Business object, not HTTP wrapper',
+      },
+    })
   })
 
   it('serves OpenAPI UI and exposes the custom API info document', async () => {

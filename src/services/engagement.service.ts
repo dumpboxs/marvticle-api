@@ -439,13 +439,13 @@ export const engagementService = {
     return toNumber(result?.count)
   },
 
-  trackView: async (postId: string, userId?: string, viewerIp?: string) => {
+  trackView: async (postId: string, userId?: string, viewerIpHash?: string) => {
     await assertPublishedPost(postId)
 
     await db.insert(viewTable).values({
       postId,
       userId: userId ?? null,
-      viewerIp: viewerIp ?? null,
+      viewerIpHash: viewerIpHash ?? null,
     })
   },
 

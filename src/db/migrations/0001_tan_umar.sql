@@ -1,0 +1,1 @@
+ALTER TABLE "views" ADD CONSTRAINT "view_actor_required_check" CHECK ("views"."user_id" is not null or "views"."viewer_ip" is not null);

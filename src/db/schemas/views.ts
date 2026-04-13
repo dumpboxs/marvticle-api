@@ -1,5 +1,12 @@
 import { sql } from 'drizzle-orm'
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import {
+  check,
+  index,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core'
 
 import { userTable } from './auth'
 import { postTable } from './post'
@@ -16,11 +23,15 @@ export const viewTable = pgTable(
     userId: uuid('user_id').references(() => userTable.id, {
       onDelete: 'cascade',
     }),
-    viewerIp: text('viewer_ip'),
+    viewerIpHash: text('viewer_ip_hash'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
     postIdIdx: index('view_post_id_idx').on(table.postId),
+    actorRequired: check(
+      'view_actor_required_check',
+      sql`${table.userId} is not null or ${table.viewerIpHash} is not null`
+    ),
   })
 )
 

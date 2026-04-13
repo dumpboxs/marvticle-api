@@ -14,22 +14,41 @@ const parseStatusCode = (value: unknown) => {
   return Number.NaN
 }
 
+const isValidHttpStatusCode = (value: number) =>
+  Number.isInteger(value) && value >= 100 && value <= 599
+
+const isStatusWrapperInstance = (
+  value: unknown
+): value is Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || value instanceof Response)
+    return false
+
+  const prototype = Object.getPrototypeOf(value)
+  if (!prototype || prototype === Object.prototype) return false
+
+  return prototype.constructor?.name === 'ElysiaCustomStatusResponse'
+}
+
 const getStatusWrapper = (
   value: unknown
 ): { code: number; payload: unknown } | null => {
-  if (!value || typeof value !== 'object' || value instanceof Response) return null
+  if (!isStatusWrapperInstance(value)) return null
 
-  const candidate = value as {
-    code?: unknown
-    response?: unknown
-  }
+  const keys = Object.keys(value)
+  if (keys.length === 0 || keys.length > 2) return null
+  if (!keys.includes('code')) return null
+  if (keys.some((key) => key !== 'code' && key !== 'response')) return null
 
-  const code = parseStatusCode(candidate.code)
-  if (!Number.isFinite(code)) return null
+  const candidate = value as Record<string, unknown>
+
+  const code = parseStatusCode(candidate['code'])
+  if (!isValidHttpStatusCode(code)) return null
 
   return {
     code,
-    payload: candidate.response,
+    payload: Object.hasOwn(candidate, 'response')
+      ? candidate['response']
+      : undefined,
   }
 }
 
