@@ -1,7 +1,11 @@
 import Elysia, { status as elysiaStatus } from 'elysia'
 import { z } from 'zod'
 
-import { getRequestAuthSession } from '#/lib/auth'
+import {
+  canManageOwnedResource,
+  getRequestAuthSession,
+  type AuthenticatedUser,
+} from '#/lib/auth'
 import { createServiceLogger } from '#/lib/logger'
 import {
   ApiSuccessSchema,
@@ -15,18 +19,12 @@ import {
   getPostByIdParamsSchema,
   getPostsQuerySchema,
   type GetPostsQuerySchema,
+  type UpdatePostBodySchema,
+  updatePostBodySchema,
 } from '#/schemas/post.schema'
-import {
-  InvalidCursorError,
-  postService,
-} from '#/services/post.service'
+import { InvalidCursorError, postService } from '#/services/post.service'
 
 const logger = createServiceLogger('postRoutes')
-
-type AuthenticatedUser = {
-  id: string
-  [key: string]: unknown
-}
 
 type AuthenticatedSession = {
   session: Record<string, unknown>
@@ -34,28 +32,47 @@ type AuthenticatedSession = {
 } | null
 
 type CreatePostResult = Awaited<ReturnType<typeof postService.create>>
+type DeletePostResult = Awaited<ReturnType<typeof postService.delete>>
+type FindPostForManagementResult = Awaited<
+  ReturnType<typeof postService.findById>
+>
 type ListPostsResult = Awaited<
   ReturnType<typeof postService.listPublishedWithCursor>
 >
 type FindPostByIdResult = Awaited<
   ReturnType<typeof postService.findPublishedById>
 >
+type UpdatePostResult = Awaited<ReturnType<typeof postService.update>>
 
 type AuthorizeCreatePostInput = {
   body: CreatePostBodySchema
   user: AuthenticatedUser
 }
 
+type AuthorizeManagePostInput = {
+  post: NonNullable<FindPostForManagementResult>
+  user: AuthenticatedUser
+}
+
 type PostRoutesDeps = {
   authorizeCreatePost: (input: AuthorizeCreatePostInput) => Promise<boolean>
+  authorizeManagePost: (input: AuthorizeManagePostInput) => Promise<boolean>
   createPost: (
     data: CreatePostBodySchema,
     authorId: string
   ) => Promise<CreatePostResult | null | undefined>
+  deletePost: (id: string) => Promise<DeletePostResult | null | undefined>
+  findPostForManagement: (
+    id: string
+  ) => Promise<FindPostForManagementResult | null | undefined>
   findPostById: (id: string) => Promise<FindPostByIdResult | null | undefined>
   getSession: (request: Request) => Promise<AuthenticatedSession>
   isRateLimited: (input: AuthorizeCreatePostInput) => Promise<boolean>
   listPosts: (query: GetPostsQuerySchema) => Promise<ListPostsResult>
+  updatePost: (
+    id: string,
+    data: UpdatePostBodySchema
+  ) => Promise<UpdatePostResult | null | undefined>
 }
 
 export type CreatePostRoutesDeps = Partial<PostRoutesDeps>
@@ -101,9 +118,27 @@ const getPostsResponseSchema = ApiSuccessSchema(
   message: z.literal('Posts fetched successfully'),
 })
 
+const updatePostResponseSchema = ApiSuccessSchema(
+  postResponseDataSchema
+).extend({
+  message: z.literal('Post updated successfully'),
+})
+
+const deletePostResponseSchema = ApiSuccessSchema(
+  z.object({
+    deleted: z.boolean(),
+  })
+).extend({
+  message: z.literal('Post deleted successfully'),
+})
+
 const defaultPostRoutesDeps: PostRoutesDeps = {
   authorizeCreatePost: async () => true,
+  authorizeManagePost: async ({ post, user }) =>
+    canManageOwnedResource(user, post.author.id),
   createPost: (data, authorId) => postService.create(data, authorId),
+  deletePost: (id) => postService.delete(id),
+  findPostForManagement: (id) => postService.findById(id),
   findPostById: (id) => postService.findPublishedById(id),
   getSession: async (request) => {
     const session = await getRequestAuthSession(request)
@@ -117,6 +152,7 @@ const defaultPostRoutesDeps: PostRoutesDeps = {
   },
   isRateLimited: async () => false,
   listPosts: (query) => postService.listPublishedWithCursor(query),
+  updatePost: (id, data) => postService.update(id, data),
 }
 
 const isUniqueConstraintError = (
@@ -419,7 +455,9 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
             return elysiaStatus(
               400,
               createErrorResponse(400, {
-                message: isSlugConstraint ? 'Slug already exists' : 'Bad request',
+                message: isSlugConstraint
+                  ? 'Slug already exists'
+                  : 'Bad request',
               })
             )
           }
@@ -438,6 +476,178 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
           description: 'Create a new blog post. Requires authentication.',
           tags: ['Posts'],
           operationId: 'createPost',
+        },
+      }
+    )
+    .put(
+      '/:id',
+      async ({ body, params, user }) => {
+        logger.debug({
+          message: 'Processing update post request',
+          metadata: {
+            postId: params.id,
+            userId: user.id,
+            fields: Object.keys(body),
+          },
+        })
+
+        const existingPost = await runtimeDeps.findPostForManagement(params.id)
+
+        if (!existingPost) {
+          logger.warn({
+            message: 'Update post route target not found',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+            },
+          })
+          return elysiaStatus(
+            404,
+            createErrorResponse(404, {
+              message: 'Post not found',
+            })
+          )
+        }
+
+        const authorized = await runtimeDeps.authorizeManagePost({
+          post: existingPost,
+          user,
+        })
+
+        if (!authorized) {
+          logger.warn({
+            message: 'Update post route unauthorized',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+              ownerId: existingPost.author.id,
+            },
+          })
+          return elysiaStatus(403, createErrorResponse(403))
+        }
+
+        const updatedPost = await runtimeDeps.updatePost(params.id, body)
+
+        if (!updatedPost) {
+          logger.warn({
+            message: 'Update post route lost target before write',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+            },
+          })
+          return elysiaStatus(
+            404,
+            createErrorResponse(404, {
+              message: 'Post not found',
+            })
+          )
+        }
+
+        return {
+          success: true,
+          message: 'Post updated successfully',
+          data: mapPostResponse(updatedPost),
+        }
+      },
+      {
+        requiredAuth: true,
+        params: getPostByIdParamsSchema,
+        body: updatePostBodySchema,
+        response: withStandardResponses({
+          200: updatePostResponseSchema,
+        }),
+        detail: {
+          summary: 'Update a post',
+          description:
+            'Update a post owned by the current user, or by an admin acting on any post.',
+          tags: ['Posts'],
+          operationId: 'updatePost',
+        },
+      }
+    )
+    .delete(
+      '/:id',
+      async ({ params, user }) => {
+        logger.debug({
+          message: 'Processing delete post request',
+          metadata: {
+            postId: params.id,
+            userId: user.id,
+          },
+        })
+
+        const existingPost = await runtimeDeps.findPostForManagement(params.id)
+
+        if (!existingPost) {
+          logger.warn({
+            message: 'Delete post route target not found',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+            },
+          })
+          return elysiaStatus(
+            404,
+            createErrorResponse(404, {
+              message: 'Post not found',
+            })
+          )
+        }
+
+        const authorized = await runtimeDeps.authorizeManagePost({
+          post: existingPost,
+          user,
+        })
+
+        if (!authorized) {
+          logger.warn({
+            message: 'Delete post route unauthorized',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+              ownerId: existingPost.author.id,
+            },
+          })
+          return elysiaStatus(403, createErrorResponse(403))
+        }
+
+        const result = await runtimeDeps.deletePost(params.id)
+
+        if (!result) {
+          logger.warn({
+            message: 'Delete post route lost target before delete',
+            metadata: {
+              postId: params.id,
+              userId: user.id,
+            },
+          })
+          return elysiaStatus(
+            404,
+            createErrorResponse(404, {
+              message: 'Post not found',
+            })
+          )
+        }
+
+        return {
+          success: true,
+          message: 'Post deleted successfully',
+          data: result,
+        }
+      },
+      {
+        requiredAuth: true,
+        params: getPostByIdParamsSchema,
+        response: withStandardResponses({
+          200: deletePostResponseSchema,
+        }),
+        detail: {
+          summary: 'Delete a post',
+          description:
+            'Delete a post owned by the current user, or by an admin acting on any post.',
+          tags: ['Posts'],
+          operationId: 'deletePost',
         },
       }
     )

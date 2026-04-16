@@ -20,6 +20,8 @@ Endpoint `/api/*` yang saat ini tersedia di backend:
 - `GET /api/posts`
 - `GET /api/posts/:id`
 - `POST /api/posts`
+- `PUT /api/posts/:id`
+- `DELETE /api/posts/:id`
 - `POST /api/engagement/likes`
 - `GET /api/engagement/likes/count`
 - `GET /api/engagement/comments`
@@ -378,7 +380,7 @@ export const postSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
   slug: z.string(),
-  content: z.string(),
+  content: z.string().nullable(),
   coverImage: z.string().nullable(),
   published: z.boolean(),
   author: postAuthorSchema,
@@ -393,16 +395,29 @@ export const postListSchema = z.object({
 })
 
 export const createPostInputSchema = z.object({
-  title: z.string().min(1),
-  slug: z.string().min(1),
-  content: z.string().min(1),
-  coverImage: z.string().nullable(),
-  published: z.boolean(),
+  title: z.string().min(3),
+  slug: z.string().min(3),
+  content: z.string().min(1).nullable().optional(),
+  coverImage: z.string().url().nullable().optional(),
+  published: z.boolean().optional(),
 })
+
+export const updatePostInputSchema = z
+  .object({
+    title: z.string().min(3).optional(),
+    content: z.string().min(1).nullable().optional(),
+    coverImage: z.string().url().nullable().optional(),
+    published: z.boolean().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field is required',
+    path: ['root'],
+  })
 
 export type Post = z.infer<typeof postSchema>
 export type PostList = z.infer<typeof postListSchema>
 export type CreatePostInput = z.infer<typeof createPostInputSchema>
+export type UpdatePostInput = z.infer<typeof updatePostInputSchema>
 ```
 
 Catatan:
@@ -411,9 +426,16 @@ Catatan:
 - bentuk `data` harus `{ items, nextCursor, hasMore }`
 - `GET /api/posts/:id` memakai `postSchema`
 - `POST /api/posts` menerima payload sesuai `createPostInputSchema`
+- `PUT /api/posts/:id` menerima payload parsial sesuai `updatePostInputSchema`
+- `DELETE /api/posts/:id` mengembalikan `{ deleted: true }`
+- slug tidak berubah lewat endpoint update saat ini
 - response post sekarang mengembalikan objek `author`, bukan `authorId`
+- `content` bisa bernilai `null`, jadi frontend tidak boleh mengasumsikan string
+  selalu ada
 - field author yang tersedia adalah `id`, `name`, `username`, dan `image`
 - `username` dan `image` sebaiknya diperlakukan nullable di frontend karena schema backend mengizinkan nilai `null`
+- update dan delete post butuh auth; backend mengembalikan `403` bila user bukan
+  owner post dan bukan admin
 
 ### Engagement
 
@@ -524,6 +546,8 @@ Pisahkan request wrapper per domain. Jangan satukan semua endpoint ke satu file 
 File: `src/features/posts/posts.api.ts`
 
 ```ts
+import { z } from 'zod'
+
 import { apiFetch } from '@/lib/api/api-client'
 
 import {
@@ -531,6 +555,8 @@ import {
   postListSchema,
   postSchema,
   type CreatePostInput,
+  type UpdatePostInput,
+  updatePostInputSchema,
 } from './posts.schemas'
 
 type GetPostsParams = {
@@ -571,6 +597,26 @@ export const createPost = async (payload: CreatePostInput) => {
     body: payload,
   })
 }
+
+export const updatePost = async (id: string, payload: UpdatePostInput) => {
+  updatePostInputSchema.parse(payload)
+
+  return apiFetch({
+    path: `/api/posts/${id}`,
+    method: 'PUT',
+    schema: postSchema,
+    body: payload,
+  })
+}
+
+export const deletePost = async (id: string) =>
+  apiFetch({
+    path: `/api/posts/${id}`,
+    method: 'DELETE',
+    schema: z.object({
+      deleted: z.literal(true),
+    }),
+  })
 ```
 
 ### Engagement API
@@ -707,6 +753,8 @@ Aturan implementasi:
 - setiap function harus memanggil `apiFetch`
 - setiap function harus mengirim schema `zod` yang spesifik
 - tiap payload input yang berasal dari UI sebaiknya divalidasi dulu di client sebelum request dikirim
+- endpoint `PUT` dan `DELETE /api/posts/:id` harus diperlakukan sebagai
+  authenticated mutation yang bisa gagal dengan `403`
 
 ## Query Keys
 
@@ -758,11 +806,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { useState } from 'react'
 
-export function AppQueryProvider({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export function AppQueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -831,19 +875,28 @@ import {
 
 import { queryKeys } from '@/lib/api/query-keys'
 
-import { createPost, getPostById, getPosts } from './posts.api'
+import {
+  createPost,
+  deletePost,
+  getPostById,
+  getPosts,
+  updatePost,
+} from './posts.api'
 
 export const usePostsInfiniteQuery = (limit = 10) =>
   useInfiniteQuery({
     queryKey: queryKeys.posts.list({ limit }),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
-      getPosts({
-        limit,
-        cursor: pageParam,
-      }, signal).then((result) => result.data),
+      getPosts(
+        {
+          limit,
+          cursor: pageParam,
+        },
+        signal
+      ).then((result) => result.data),
     getNextPageParam: (lastPage) =>
-      lastPage.hasMore ? lastPage.nextCursor ?? undefined : undefined,
+      lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
   })
 
 export const usePostDetailQuery = (id: string) =>
@@ -866,6 +919,47 @@ export const useCreatePostMutation = () => {
     },
   })
 }
+
+export const useUpdatePostMutation = (id: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payload: {
+      title?: string
+      content?: string | null
+      coverImage?: string | null
+      published?: boolean
+    }) => updatePost(id, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.posts.detail(id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.posts.all,
+        }),
+      ])
+    },
+  })
+}
+
+export const useDeletePostMutation = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: deletePost,
+    onSuccess: async (_result, id) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.posts.all,
+        }),
+        queryClient.removeQueries({
+          queryKey: queryKeys.posts.detail(id),
+        }),
+      ])
+    },
+  })
+}
 ```
 
 Catatan:
@@ -873,6 +967,8 @@ Catatan:
 - `pageParam` diisi `cursor`
 - `getNextPageParam` mengambil `nextCursor`
 - infinite query berhenti saat `hasMore` false atau `nextCursor` null
+- update post invalidate detail dan list posts
+- delete post invalidate list dan hapus cached detail post
 
 ### Engagement Queries
 
@@ -895,15 +991,13 @@ import {
   updateComment,
 } from './engagement.api'
 
-export const useCommentsQuery = (
-  postId: string,
-  page = 1,
-  limit = 20
-) =>
+export const useCommentsQuery = (postId: string, page = 1, limit = 20) =>
   useQuery({
     queryKey: queryKeys.engagement.comments({ postId, page, limit }),
     queryFn: ({ signal }) =>
-      getComments({ postId, page, limit }, signal).then((result) => result.data),
+      getComments({ postId, page, limit }, signal).then(
+        (result) => result.data
+      ),
     enabled: Boolean(postId),
   })
 
@@ -1114,9 +1208,9 @@ Kontrak frontend yang harus dijaga konsisten:
 - `ApiClientError`
 - `apiFetch<TSchema>(options)`
 - `queryKeys`
-- `getPosts`, `getPostById`, `createPost`
+- `getPosts`, `getPostById`, `createPost`, `updatePost`, `deletePost`
 - `toggleLike`, `getLikesCount`, `getComments`, `createComment`, `updateComment`, `deleteComment`, `getCommentsCount`, `trackView`, `getViewsCount`
-- `usePostsInfiniteQuery`, `usePostDetailQuery`, `useCreatePostMutation`
+- `usePostsInfiniteQuery`, `usePostDetailQuery`, `useCreatePostMutation`, `useUpdatePostMutation`, `useDeletePostMutation`
 - `useCommentsQuery`, `useLikesCountQuery`, `useViewsCountQuery`
 - `useToggleLikeMutation`, `useCreateCommentMutation`, `useUpdateCommentMutation`, `useDeleteCommentMutation`, `useTrackViewMutation`
 
@@ -1169,13 +1263,23 @@ Skenario yang harus diuji setelah implementasi:
 
 - create dan delete comment me-refresh comments list dan comments count
 - toggle like me-refresh likes count
+- update post me-refresh post detail dan post list
+- delete post me-refresh post list dan menghapus cache detail post
 
 ### 8. Form validation
 
 - `VALIDATION_ERROR` bisa dipetakan ke field form
 - `fieldErrors.content` atau key lain bisa langsung dipakai di UI
 
-### 9. Network failure
+### 9. Ownership / admin authorization
+
+- panggil `PUT /api/posts/:id` atau `DELETE /api/posts/:id` sebagai user yang
+  bukan owner dan bukan admin
+- helper melempar `ApiClientError`
+- `error.status === 403`
+- `error.code === 'FORBIDDEN'`
+
+### 10. Network failure
 
 - matikan backend atau ubah base URL
 - pastikan komponen menampilkan fallback message yang aman
@@ -1193,6 +1297,7 @@ Skenario yang harus diuji setelah implementasi:
 - [ ] tangani `fieldErrors` di form
 - [ ] pastikan semua endpoint `/api/*` memakai helper yang sama
 - [ ] pastikan `/auth/*` tidak memakai helper yang sama
+- [ ] tangani `403 FORBIDDEN` untuk mutation post update/delete
 
 ## Asumsi dan Default yang Dikunci
 

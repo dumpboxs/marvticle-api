@@ -47,10 +47,20 @@ const createdPost = {
   updatedAt: new Date('2026-04-11T00:00:00.000Z'),
 }
 
+const updatedPost = {
+  ...createdPost,
+  title: 'Updated post title',
+  content: 'Updated post content',
+  published: false,
+  updatedAt: new Date('2026-04-12T00:00:00.000Z'),
+}
+
 const buildApp = (deps: CreatePostRoutesDeps = {}) => {
   const defaultDeps: CreatePostRoutesDeps = {
     authorizeCreatePost: async () => true,
     createPost: async () => createdPost,
+    deletePost: async () => ({ deleted: true }),
+    findPostForManagement: async () => createdPost,
     findPostById: async () => createdPost,
     getSession: async () => ({
       session: { id: 'session-id' },
@@ -62,6 +72,7 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
       nextCursor: 'next-cursor-token',
       hasMore: true,
     }),
+    updatePost: async () => updatedPost,
   }
 
   return new Elysia()
@@ -127,6 +138,20 @@ const getPostsRequest = (query?: URLSearchParams) =>
 
 const getPostByIdRequest = (id: string) =>
   new Request(`http://localhost/api/posts/${id}`)
+
+const updatePostRequest = (id: string, payload: unknown) =>
+  new Request(`http://localhost/api/posts/${id}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+const deletePostRequest = (id: string) =>
+  new Request(`http://localhost/api/posts/${id}`, {
+    method: 'DELETE',
+  })
 
 const createLogCapture = () => {
   const chunks: string[] = []
@@ -240,11 +265,43 @@ describe('post.route response contract', () => {
     expect(body['success']).toBe(true)
     expect(body['message']).toBe('Post created successfully')
     const data = body['data'] as Record<string, unknown>
-    expect(data['createdAt']).toBe(
-      '2026-04-11T00:00:00.000Z'
-    )
+    expect(data['createdAt']).toBe('2026-04-11T00:00:00.000Z')
     expect(data['authorId']).toBeUndefined()
     expect(data['author']).toEqual(postAuthor)
+  })
+
+  it('returns 200 on successful update', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      updatePostRequest(createdPost.id, {
+        title: updatedPost.title,
+        content: updatedPost.content,
+        published: updatedPost.published,
+      })
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Post updated successfully')
+    const data = body['data'] as Record<string, unknown>
+    expect(data['title']).toBe(updatedPost.title)
+    expect(data['published']).toBe(updatedPost.published)
+    expect(data['updatedAt']).toBe('2026-04-12T00:00:00.000Z')
+    expect(data['author']).toEqual(postAuthor)
+  })
+
+  it('returns 200 on successful delete', async () => {
+    const app = buildApp()
+    const response = await app.handle(deletePostRequest(createdPost.id))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Post deleted successfully')
+    expect(body['data']).toEqual({
+      deleted: true,
+    })
   })
 
   it('returns 401 when session does not exist', async () => {
@@ -260,6 +317,22 @@ describe('post.route response contract', () => {
     expect(body['message']).toBe('Unauthorized')
   })
 
+  it('returns 401 when updating without a session', async () => {
+    const app = buildApp({
+      getSession: async () => null,
+    })
+    const response = await app.handle(
+      updatePostRequest(createdPost.id, {
+        title: updatedPost.title,
+      })
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(401)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('UNAUTHORIZED')
+  })
+
   it('returns 403 when authorization check fails', async () => {
     const app = buildApp({
       authorizeCreatePost: async () => false,
@@ -270,6 +343,100 @@ describe('post.route response contract', () => {
     expect(response.status).toBe(403)
     expect(body['success']).toBe(false)
     expect(body['code']).toBe('FORBIDDEN')
+  })
+
+  it('returns 403 when a non-admin tries to update another author post', async () => {
+    const app = buildApp({
+      getSession: async () => ({
+        session: { id: 'session-id' },
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440099',
+          role: 'user',
+        },
+      }),
+    })
+    const response = await app.handle(
+      updatePostRequest(createdPost.id, {
+        title: updatedPost.title,
+      })
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(403)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('FORBIDDEN')
+  })
+
+  it('returns 200 when an admin updates another author post', async () => {
+    const app = buildApp({
+      getSession: async () => ({
+        session: { id: 'session-id' },
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440099',
+          role: 'admin',
+        },
+      }),
+    })
+    const response = await app.handle(
+      updatePostRequest(createdPost.id, {
+        title: updatedPost.title,
+      })
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Post updated successfully')
+  })
+
+  it('returns 200 when an admin deletes another author post', async () => {
+    const app = buildApp({
+      getSession: async () => ({
+        session: { id: 'session-id' },
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440099',
+          role: 'admin',
+        },
+      }),
+    })
+    const response = await app.handle(deletePostRequest(createdPost.id))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['data']).toEqual({
+      deleted: true,
+    })
+  })
+
+  it('returns 404 when updating a missing post', async () => {
+    const app = buildApp({
+      findPostForManagement: async () => null,
+    })
+    const response = await app.handle(
+      updatePostRequest(createdPost.id, {
+        title: updatedPost.title,
+      })
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(404)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('NOT_FOUND')
+    expect(body['message']).toBe('Post not found')
+  })
+
+  it('returns 404 when deleting a missing post', async () => {
+    const app = buildApp({
+      findPostForManagement: async () => null,
+    })
+    const response = await app.handle(deletePostRequest(createdPost.id))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(404)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('NOT_FOUND')
+    expect(body['message']).toBe('Post not found')
   })
 
   it('returns 404 for missing resource', async () => {
@@ -302,6 +469,19 @@ describe('post.route response contract', () => {
     const errors = body['errors'] as Record<string, unknown>
     expect(typeof errors['title']).toBe('string')
     expect(typeof errors['slug']).toBe('string')
+  })
+
+  it('returns 422 for invalid update body', async () => {
+    const app = buildApp()
+    const response = await app.handle(updatePostRequest(createdPost.id, {}))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(422)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('VALIDATION_ERROR')
+    expect(body['errors']).toBeDefined()
+    const errors = body['errors'] as Record<string, unknown>
+    expect(typeof errors['root']).toBe('string')
   })
 
   it('returns 429 when rate limited', async () => {
@@ -451,7 +631,19 @@ describe('post.route response contract', () => {
             tags?: string[]
             operationId?: string
           }
+          delete?: {
+            summary?: string
+            description?: string
+            tags?: string[]
+            operationId?: string
+          }
           post?: {
+            summary?: string
+            description?: string
+            tags?: string[]
+            operationId?: string
+          }
+          put?: {
             summary?: string
             description?: string
             tags?: string[]
@@ -491,6 +683,22 @@ describe('post.route response contract', () => {
       description: 'Retrieve a single published post by its ID.',
       tags: ['Posts'],
       operationId: 'getPostById',
+    })
+
+    expect(spec.paths?.[postByIdPathKey!]?.put).toMatchObject({
+      summary: 'Update a post',
+      description:
+        'Update a post owned by the current user, or by an admin acting on any post.',
+      tags: ['Posts'],
+      operationId: 'updatePost',
+    })
+
+    expect(spec.paths?.[postByIdPathKey!]?.delete).toMatchObject({
+      summary: 'Delete a post',
+      description:
+        'Delete a post owned by the current user, or by an admin acting on any post.',
+      tags: ['Posts'],
+      operationId: 'deletePost',
     })
   })
 

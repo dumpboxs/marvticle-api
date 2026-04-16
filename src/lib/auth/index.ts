@@ -377,3 +377,5 @@ export const OpenAPI = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unnecessary-type-assertion
   components: getSchema().then(({ components }) => components) as Promise<any>,
 } as const
+
+export * from './authorization'

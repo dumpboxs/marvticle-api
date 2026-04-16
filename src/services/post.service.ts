@@ -1,14 +1,9 @@
-import {
-  and,
-  desc,
-  eq,
-  lt,
-  or,
-} from 'drizzle-orm'
+import { and, desc, eq, lt, or } from 'drizzle-orm'
 
 import {
   type CreatePostBodySchema,
   type GetPostsQuerySchema,
+  type UpdatePostBodySchema,
 } from '#/schemas/post.schema'
 
 import { db } from '#/db'
@@ -48,10 +43,7 @@ const decodeCursor = (cursor: string): CursorPayload => {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
     const parsed = JSON.parse(decoded) as CursorPayload
 
-    if (
-      typeof parsed.createdAt !== 'string' ||
-      typeof parsed.id !== 'string'
-    ) {
+    if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') {
       throw new InvalidCursorError()
     }
 
@@ -164,6 +156,50 @@ export const postService = {
     }
   },
 
+  findById: async (id: string) => {
+    const startedAt = performance.now()
+
+    logger.debug({
+      message: 'Fetching post by id for management',
+      metadata: {
+        postId: id,
+      },
+    })
+
+    try {
+      const [row] = await db
+        .select(postWithAuthorSelection)
+        .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
+        .where(eq(postTable.id, id))
+        .limit(1)
+
+      const post = row ? mapPostWithAuthorRow(row) : null
+
+      logger.info({
+        message: post ? 'Post found for management' : 'Post not found',
+        metadata: {
+          postId: id,
+          found: Boolean(post),
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return post
+    } catch (error) {
+      logger.error({
+        message: 'Fetch post for management failed',
+        metadata: {
+          postId: id,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
+    }
+  },
+
   findPublishedById: async (id: string) => {
     const startedAt = performance.now()
 
@@ -179,12 +215,7 @@ export const postService = {
         .select(postWithAuthorSelection)
         .from(postTable)
         .innerJoin(userTable, eq(postTable.authorId, userTable.id))
-        .where(
-          and(
-            eq(postTable.id, id),
-            eq(postTable.published, true)
-          )
-        )
+        .where(and(eq(postTable.id, id), eq(postTable.published, true)))
         .limit(1)
 
       const post = row ? mapPostWithAuthorRow(row) : null
@@ -213,10 +244,126 @@ export const postService = {
     }
   },
 
-  listPublishedWithCursor: async ({
-    cursor,
-    limit,
-  }: GetPostsQuerySchema) => {
+  update: async (id: string, data: UpdatePostBodySchema) => {
+    const startedAt = performance.now()
+
+    logger.info({
+      message: 'Updating post',
+      metadata: {
+        postId: id,
+        fields: Object.keys(data),
+      },
+    })
+
+    try {
+      const [updatedPost] = await db
+        .update(postTable)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(postTable.id, id))
+        .returning()
+
+      if (!updatedPost) {
+        logger.warn({
+          message: 'Post update target not found',
+          metadata: {
+            postId: id,
+          },
+          duration: performance.now() - startedAt,
+        })
+
+        return null
+      }
+
+      const [row] = await db
+        .select(postWithAuthorSelection)
+        .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
+        .where(eq(postTable.id, updatedPost.id))
+        .limit(1)
+
+      const post = row ? mapPostWithAuthorRow(row) : null
+
+      logger.info({
+        message: 'Post updated successfully',
+        metadata: {
+          postId: updatedPost.id,
+          fields: Object.keys(data),
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return post
+    } catch (error) {
+      logger.error({
+        message: 'Update post failed',
+        metadata: {
+          postId: id,
+          fields: Object.keys(data),
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
+    }
+  },
+
+  delete: async (id: string) => {
+    const startedAt = performance.now()
+
+    logger.info({
+      message: 'Deleting post',
+      metadata: {
+        postId: id,
+      },
+    })
+
+    try {
+      const deletedPost = await db
+        .delete(postTable)
+        .where(eq(postTable.id, id))
+        .returning({ id: postTable.id })
+        .then((rows) => rows[0])
+
+      if (!deletedPost) {
+        logger.warn({
+          message: 'Post delete target not found',
+          metadata: {
+            postId: id,
+          },
+          duration: performance.now() - startedAt,
+        })
+
+        return null
+      }
+
+      logger.info({
+        message: 'Post deleted successfully',
+        metadata: {
+          postId: id,
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return { deleted: true }
+    } catch (error) {
+      logger.error({
+        message: 'Delete post failed',
+        metadata: {
+          postId: id,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
+    }
+  },
+
+  listPublishedWithCursor: async ({ cursor, limit }: GetPostsQuerySchema) => {
     const startedAt = performance.now()
 
     logger.debug({
@@ -242,18 +389,19 @@ export const postService = {
         })
       }
 
-      const whereCondition = parsedCursor && cursorDate
-        ? and(
-            eq(postTable.published, true),
-            or(
-              lt(postTable.createdAt, cursorDate),
-              and(
-                eq(postTable.createdAt, cursorDate),
-                lt(postTable.id, parsedCursor.id)
+      const whereCondition =
+        parsedCursor && cursorDate
+          ? and(
+              eq(postTable.published, true),
+              or(
+                lt(postTable.createdAt, cursorDate),
+                and(
+                  eq(postTable.createdAt, cursorDate),
+                  lt(postTable.id, parsedCursor.id)
+                )
               )
             )
-          )
-        : eq(postTable.published, true)
+          : eq(postTable.published, true)
 
       const rows = await db
         .select(postWithAuthorSelection)
@@ -269,12 +417,13 @@ export const postService = {
       )
       const lastItem = items.at(-1)
 
-      const nextCursor = hasMore && lastItem
-        ? encodeCursor({
-            createdAt: toCursorDate(lastItem.createdAt).toISOString(),
-            id: lastItem.id,
-          })
-        : null
+      const nextCursor =
+        hasMore && lastItem
+          ? encodeCursor({
+              createdAt: toCursorDate(lastItem.createdAt).toISOString(),
+              id: lastItem.id,
+            })
+          : null
 
       if (nextCursor) {
         logger.debug({
