@@ -9,7 +9,12 @@ import {
 } from '#/schemas/post.schema'
 
 import { db } from '#/db'
-import { postTable, userTable } from '#/db/schemas'
+import {
+  publicPostSelection,
+  type PublicPost,
+  postTable,
+  userTable,
+} from '#/db/schemas'
 import { createServiceLogger } from '#/lib/logger'
 
 type ListCursorPayload = {
@@ -31,7 +36,7 @@ type SearchPostsInput = {
   limit: number
 }
 
-type PostRecord = typeof postTable.$inferSelect
+type PostRecord = PublicPost
 
 type PostAuthor = {
   id: string
@@ -126,7 +131,7 @@ const getSearchQueryLogMetadata = (query: string) => ({
 })
 
 const postWithAuthorSelection = {
-  post: postTable,
+  post: publicPostSelection,
   author: {
     id: userTable.id,
     name: userTable.name,

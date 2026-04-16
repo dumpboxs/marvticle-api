@@ -43,3 +43,17 @@ export const postTable = pgTable(
     searchIdx: index('idx_posts_search').using('gin', table.searchVector),
   })
 )
+
+export const publicPostSelection = {
+  id: postTable.id,
+  title: postTable.title,
+  slug: postTable.slug,
+  content: postTable.content,
+  coverImage: postTable.coverImage,
+  published: postTable.published,
+  authorId: postTable.authorId,
+  createdAt: postTable.createdAt,
+  updatedAt: postTable.updatedAt,
+} as const
+
+export type PublicPost = Omit<typeof postTable.$inferSelect, 'searchVector'>

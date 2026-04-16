@@ -31,6 +31,8 @@ const requiredLegacyTables = [
   'views',
 ] as const
 
+const MIGRATION_BOOTSTRAP_LOCK_KEYS: [number, number] = [39124, 1604]
+
 const sha256 = (value: string) =>
   createHash('sha256').update(value, 'utf8').digest('hex')
 
@@ -97,6 +99,32 @@ const constraintExists = async (
   return Boolean(result.rows[0]?.exists)
 }
 
+const generatedColumnExpression = async (
+  client: Client,
+  table: string,
+  column: string
+) => {
+  const result = await client.query<{ expression: string | null }>(
+    `
+      select pg_get_expr(definition.adbin, definition.adrelid) as expression
+      from pg_attribute attribute
+      inner join pg_class relation on relation.oid = attribute.attrelid
+      inner join pg_namespace namespace on namespace.oid = relation.relnamespace
+      left join pg_attrdef definition
+        on definition.adrelid = attribute.attrelid
+       and definition.adnum = attribute.attnum
+      where namespace.nspname = 'public'
+        and relation.relname = $1
+        and attribute.attname = $2
+        and attribute.attisdropped = false
+      limit 1
+    `,
+    [table, column]
+  )
+
+  return result.rows[0]?.expression ?? null
+}
+
 const ensureMigrationJournal = async (client: Client) => {
   await client.query('create schema if not exists drizzle')
   await client.query(`
@@ -114,7 +142,17 @@ const detectLegacyBaselineIdx = async (client: Client) => {
     if (!exists) return null
   }
 
-  if (await columnExists(client, 'posts', 'search_vector')) return 3
+  if (await columnExists(client, 'posts', 'search_vector')) {
+    const expression = await generatedColumnExpression(
+      client,
+      'posts',
+      'search_vector'
+    )
+
+    if (expression?.includes("'english'")) return 4
+
+    return 3
+  }
   if (await columnExists(client, 'views', 'viewer_ip_hash')) return 2
   if (await constraintExists(client, 'views', 'view_actor_required_check')) {
     return 1
@@ -124,26 +162,39 @@ const detectLegacyBaselineIdx = async (client: Client) => {
 }
 
 const bootstrapLegacyJournalIfNeeded = async (client: Client) => {
-  await ensureMigrationJournal(client)
-
-  const migrationCount = await client.query<{ count: string }>(
-    'select count(*)::text as count from drizzle.__drizzle_migrations'
-  )
-  const count = Number(migrationCount.rows[0]?.count ?? '0')
-
-  if (count > 0) return
-
-  const baselineIdx = await detectLegacyBaselineIdx(client)
-  if (baselineIdx === null) return
-
-  const entries = loadJournalEntries().filter(
-    (entry) => entry.idx <= baselineIdx
-  )
-  if (entries.length === 0) return
-
   await client.query('begin')
 
   try {
+    await client.query(
+      'select pg_advisory_xact_lock($1, $2)',
+      MIGRATION_BOOTSTRAP_LOCK_KEYS
+    )
+    await ensureMigrationJournal(client)
+
+    const migrationCount = await client.query<{ count: string }>(
+      'select count(*)::text as count from drizzle.__drizzle_migrations'
+    )
+    const count = Number(migrationCount.rows[0]?.count ?? '0')
+
+    if (count > 0) {
+      await client.query('commit')
+      return
+    }
+
+    const baselineIdx = await detectLegacyBaselineIdx(client)
+    if (baselineIdx === null) {
+      await client.query('commit')
+      return
+    }
+
+    const entries = loadJournalEntries().filter(
+      (entry) => entry.idx <= baselineIdx
+    )
+    if (entries.length === 0) {
+      await client.query('commit')
+      return
+    }
+
     for (const entry of entries) {
       const sql = readFileSync(migrationPath(entry.tag), 'utf8')
       await client.query(
